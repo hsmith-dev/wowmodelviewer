@@ -40,9 +40,9 @@
 
 namespace core
 {
-  _MEMORYUTILS_API_ void __cdecl displayMemInfo(QString message, bool displaySQLiteSize = false);
+  _MEMORYUTILS_API_ void displayMemInfo(QString message, bool displaySQLiteSize = false);
 
-  _MEMORYUTILS_API_ int __cdecl getMemoryUsed();
+  _MEMORYUTILS_API_ int getMemoryUsed();
 }
 
 

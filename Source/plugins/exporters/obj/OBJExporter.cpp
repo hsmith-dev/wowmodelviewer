@@ -364,7 +364,7 @@ bool OBJExporter::exportModelVertices(WoWModel * model, QTextStream & file, int 
 
 bool OBJExporter::exportModelMaterials(WoWModel * model, QTextStream & file, QString mtlFile) const
 {
-  std::map<std::wstring, GLuint> texToExport;
+  std::map<std::wstring, TextureID> texToExport;
 
   for (size_t i=0; i<model->passes.size(); i++)
   {
@@ -411,14 +411,14 @@ bool OBJExporter::exportModelMaterials(WoWModel * model, QTextStream & file, QSt
 
       file << "map_Kd " << tex << "\n";
       tex = QFileInfo(mtlFile).absolutePath() + "\\" + tex;
-      texToExport[tex.toStdWString()] = model->getGLTexture(p->tex);
+      texToExport[tex.toStdWString()] = model->getTexture(p->tex);
     }
   }
 
   LOG_INFO << "nb textures to export :" << texToExport.size();
 
   for(auto& it : texToExport)
-      exportGLTexture(it.second, it.first);
+      exportTexture(it.second, it.first);
 
   return true;
 }
