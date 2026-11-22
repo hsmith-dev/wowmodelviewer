@@ -3,6 +3,7 @@
  */
 
 #include "TextureBrowse.h"
+#include <functional>
 
 #include <algorithm>
 #include <map>
@@ -14,7 +15,7 @@
   #include <wx/msw/wrapwin.h>
 #endif
 
-#include "UnityAssetAccess.h"
+#include "ClientState.h"
 #include "logger/Logger.h"
 
 namespace
@@ -55,7 +56,7 @@ TextureBrowse::TextureBrowse(wxTreeCtrl * tree) : m_tree(tree)
 
 bool TextureBrowse::ensureCatalog()
 {
-  if (UnityAssetAccess::isClientLoading() || !UnityAssetAccess::hasActiveClient())
+  if (ClientState::isClientLoading() || !ClientState::hasActiveClient())
     return false;
   if (m_catalogCurrent)
     return true;

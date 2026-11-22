@@ -7,6 +7,11 @@
 
 #include "CASCFolder.h"
 
+#include <QDir>
+#include <QFileInfo>
+#include "TString.h"
+#include "TString.h"
+
 #ifndef __CASCLIB_SELF__
   #define __CASCLIB_SELF__
 #endif
@@ -37,8 +42,8 @@ void CASCFolder::init(const QString &path)
 {
   m_folder = path;
 
-  if(m_folder.endsWith("\\"))
-    m_folder.remove(m_folder.size()-1,1);
+  while (m_folder.endsWith("\\") || m_folder.endsWith("/"))
+    m_folder.chop(1);
 
   initBuildInfo();
 }
@@ -102,9 +107,9 @@ bool CASCFolder::setConfig(core::GameConfig config)
       openArgs.dwLocaleMask = it->second;
       openArgs.PfnProgressCallback = &onCascOpenProgress;
       openArgs.PtrProgressParam = this;
-      const std::wstring cascPath = cascParams.toStdWString();
+      const wmv::tstring cascPath = wmv::toTString(cascParams);
       const bool cascOpened = CascOpenStorageEx(cascPath.c_str(), &openArgs, false, &opened);
-      const DWORD openError = cascOpened ? ERROR_SUCCESS : GetLastError(); // before anything logs (that can reset it)
+      const DWORD openError = cascOpened ? ERROR_SUCCESS : GetCascError(); // before anything logs (that can reset it)
       core::LoadTimeline::instance().end("casc open", cascOpened ? QString() : QString("failed"));
       if (!cascOpened)
       {
@@ -438,7 +443,8 @@ quint64 CASCFolder::nextStorageGeneration()
 void CASCFolder::initBuildInfo()
 {
   m_configs.clear();
-  QString buildinfofile = m_folder + "\\..\\.build.info";
+  // The install folder above Data (CascLib opens "<Data>*<product>").
+  QString buildinfofile = QFileInfo(m_folder).dir().absoluteFilePath(".build.info");
   LOG_INFO << "buildinfofile : " << buildinfofile;
 
   QFile file(buildinfofile);

@@ -1,0 +1,163 @@
+# Builds the viewer on macOS, Linux and Windows on every push and pull request, and keeps each platform's build as an
+# artifact. Nothing is signed with an identity: the macOS bundle carries the linker's ad-hoc signature only.
+name: Build
+
+on:
+  push:
+    branches: [ develop ]
+    tags: [ 'v*' ]
+  pull_request:   # (a branch is built through its pull request; develop and tags on push)
+  workflow_dispatch:
+
+env:
+  WX_VERSION: 3.3.3
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: brew install ninja qt@5 wxwidgets molten-vk vulkan-loader vulkan-headers shaderc libpng jpeg-turbo
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
+      - name: Package
+        run: installer/macos/make-bundle.sh build "$PWD/dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wowmodelviewer-macos
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build qtbase5-dev libqt5xml5 libgtk-3-dev libx11-dev libvulkan-dev glslc \
+            libpng-dev libjpeg-dev zlib1g-dev libbz2-dev libsecret-1-dev libnotify-dev libcurl4-openssl-dev
+      - name: wxWidgets cache
+        id: wxcache
+        uses: actions/cache@v4
+        with:
+          path: ~/wx
+          key: wx-${{ env.WX_VERSION }}-gtk3-ubuntu-24.04
+      - name: wxWidgets ${{ env.WX_VERSION }}
+        if: steps.wxcache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o wx.tar.bz2 https://github.com/wxWidgets/wxWidgets/releases/download/v${WX_VERSION}/wxWidgets-${WX_VERSION}.tar.bz2
+          tar xjf wx.tar.bz2
+          cd wxWidgets-${WX_VERSION}
+          ./configure --prefix=$HOME/wx --with-gtk=3 --disable-tests --disable-webview --disable-mediactrl -q
+          make -j"$(nproc)" >/dev/null
+          make install >/dev/null
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DwxWidgets_CONFIG_EXECUTABLE=$HOME/wx/bin/wx-config
+      - name: Build
+        run: LD_LIBRARY_PATH=$HOME/wx/lib cmake --build build
+      - name: Package
+        run: installer/linux/make-appimage.sh build "$HOME/wx" "$PWD/dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wowmodelviewer-linux
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Qt 5.15
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 5.15.2
+          arch: win64_msvc2019_64
+          cache: true
+      - name: Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.3.296.0
+          cache: true
+      - name: wxWidgets ${{ env.WX_VERSION }} (official binaries)
+        shell: pwsh
+        run: |
+          $base = "https://github.com/wxWidgets/wxWidgets/releases/download/v$env:WX_VERSION"
+          $dest = "ThirdParty/wxWidgets33"
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          foreach ($f in @("wxWidgets-$env:WX_VERSION-headers.7z", "wxMSW-$($env:WX_VERSION)_vc14x_x64_Dev.7z", "wxMSW-$($env:WX_VERSION)_vc14x_x64_ReleaseDLL.7z")) {
+            Invoke-WebRequest "$base/$f" -OutFile $f
+            7z x $f "-o$dest" -y | Out-Null
+          }
+      - name: OpenSSL 1.1 (Qt 5.15's HTTPS)
+        shell: pwsh
+        run: |
+          # Qt 5.15 loads OpenSSL 1.1 at run time (not 3.x); Qt's own repository no longer carries it.
+          Invoke-WebRequest "https://download.firedaemon.com/FireDaemon-OpenSSL/openssl-1.1.1w.zip" -OutFile openssl.zip
+          7z x openssl.zip -oopenssl -y | Out-Null
+          $dlls = Get-ChildItem -Recurse openssl -Include libssl-1_1-x64.dll, libcrypto-1_1-x64.dll | Where-Object { $_.FullName -match 'x64' }
+          if ($dlls.Count -lt 2) { throw "OpenSSL 1.1 x64 DLLs not found in the archive" }
+          New-Item -ItemType Directory -Force openssl-bin | Out-Null
+          $dlls | Copy-Item -Destination openssl-bin
+      - name: libpng, libjpeg (vcpkg)
+        run: C:\vcpkg\vcpkg.exe install libpng:x64-windows libjpeg-turbo:x64-windows zlib:x64-windows
+      - name: Configure
+        shell: pwsh
+        run: >
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DQT_LOCATION="$env:QT_ROOT_DIR"
+          -DWMV_VCPKG_X64=C:/vcpkg/installed/x64-windows
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Package (portable zip)
+        shell: pwsh
+        run: |
+          $b = "build/Source"
+          $d = "dist/WoWModelViewer"
+          New-Item -ItemType Directory -Force "$d/plugins", "$d/games/wow", "$d/dbd" | Out-Null
+          Copy-Item "$b/wowmodelviewer/Release/wowmodelviewer.exe", "$b/core/Release/core.dll", "$b/games/wow/Release/wow.dll" $d
+          Copy-Item "$b/plugins/importers/armory/Release/armory.dll", "$b/plugins/importers/wowhead/Release/wowhead.dll", "$b/plugins/exporters/obj/Release/objexporter.dll" "$d/plugins"
+          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release --compiler-runtime --no-translations --no-opengl-sw "$d/wowmodelviewer.exe" "$d/core.dll" "$d/wow.dll"
+          Get-ChildItem "ThirdParty/wxWidgets33/lib/vc14x_x64_dll/wx*u_*.dll" | Where-Object { $_.Name -notmatch 'ud_' } | Copy-Item -Destination $d
+          Copy-Item "C:/vcpkg/installed/x64-windows/bin/*.dll" $d
+          Copy-Item "openssl-bin/*.dll" $d
+          # The Visual C++ runtime, so the program starts on a PC without the redistributable installed.
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -property installationPath
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC14*.CRT" | Sort-Object FullName | Select-Object -Last 1
+          if (-not $crt) { throw "no Visual C++ runtime folder found" }
+          Copy-Item "$($crt.FullName)/vcruntime140.dll", "$($crt.FullName)/vcruntime140_1.dll", "$($crt.FullName)/msvcp140.dll" $d
+          foreach ($v in '9.2','10.0','10.1','12.0') { Copy-Item -Recurse "bin_support/wow/$v" "$d/games/wow/$v" }
+          Copy-Item "bin_support/dbd/*.dbd" "$d/dbd"
+          Copy-Item "bin_support/Encryption/extraEncryptionKeys.csv", "LICENSE", "THIRD-PARTY-NOTICES.txt", "installer/README.txt" $d
+          Compress-Archive -Path "$d" -DestinationPath "dist/WoWModelViewer-1.2-Windows-x64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wowmodelviewer-windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  # A tag v* publishes the three builds as a GitHub Release (a pre-release while the tag has a '-': v1.2.0-preview.1).
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ macos, linux, windows ]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        run: cd artifacts && sha256sum * | tee SHA256SUMS.txt
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body_path: installer/RELEASE-NOTES.md

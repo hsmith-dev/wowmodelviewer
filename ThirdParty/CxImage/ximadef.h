@@ -58,11 +58,18 @@
  #define CXIMAGE_SUPPORT_WINDOWS 0
 #endif
 
+#if defined(_WINDOWS) || defined(_WIN32)
 #ifndef min
 #define min(a,b) (((a)<(b))?(a):(b))
 #endif
 #ifndef max
 #define max(a,b) (((a)>(b))?(a):(b))
+#endif
+#else
+// Elsewhere functions, not macros: a min/max macro breaks every standard header that follows it (libstdc++ uses both
+// names). Mixed operand types, as CxImage passes them, give the macro's common type.
+template <class A, class B> inline auto min(A a, B b) -> decltype(a < b ? a : b) { return a < b ? a : b; }
+template <class A, class B> inline auto max(A a, B b) -> decltype(a > b ? a : b) { return a > b ? a : b; }
 #endif
 
 #ifndef PI
